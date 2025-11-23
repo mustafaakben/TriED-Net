@@ -18,9 +18,9 @@ The rest of this document explains the model in a paper-style format and is grou
 
 Given an input vector $x \in \mathbb{R}^D$, the encoder is a two-layer MLP:
 
-$$
+```math
 h_0 = \text{LN}\big(\sigma(W_2\,\sigma(W_1 x + b_1) + b_2)\big), \quad h_0 \in \mathbb{R}^H
-$$
+```
 
 where $\sigma$ is ReLU, LN is LayerNorm, and optional dropout is applied between layers (controlled by `dropout` in `TriEDConfig`).
 
@@ -32,21 +32,21 @@ The task head is linear:
 
 An optional **Symbolizer** maps inputs to a "symbolic" embedding:
 
-$$
+```math
 h_{\text{sym}} = \phi(x) \in \mathbb{R}^{C},\quad \pi = \text{softmax}\left(\frac{W_{\text{code}} h_{\text{sym}}}{\tau}\right) \in \Delta^{K-1},
-$$
+```
 
-$$
+```math
 s = \pi^\top \mathcal{C} \in \mathbb{R}^C,
-$$
+```
 
 where $\mathcal{C} \in \mathbb{R}^{K \times C}$ is the learned codebook (`codebook_size`), and $\tau>0$ is a learnable temperature. A linear map $A$ projects the latent $h$ into the same space as $s$.
 
 The alignment term in the energy encourages consistency:
 
-$$
+```math
 E_{\text{align}}(h;x,s) = \lambda_{\text{align}} \|A h - s\|_2^2.
-$$
+```
 
 ### 1.3 Prototypes & Crystallized Memory
 
@@ -54,29 +54,29 @@ For classification, we maintain prototypes $\{p_{k,m}\}$ for each class $k$ and 
 
 Energy contribution from prototypes:
 
-$$
+```math
 E_{\text{proto}}(h) = \lambda_{\text{proto}} \min_j \|h - p_j\|_2^2.
-$$
+```
 
 Prototype logits for class $k$:
 
-$$
+```math
 d^2_{k,m}(h) = \|h - p_{k,m}\|_2^2,\quad
 \text{logits}_k^{\text{proto}} = -\log\sum_m \exp(-d^2_{k,m}(h)).
-$$
+```
 
 Regression prototype head:
 
-$$
+```math
 w_j(h) = \frac{\exp(-\|h-p_j\|_2^2)}{\sum_\ell \exp(-\|h-p_\ell\|_2^2)},\quad
 y^{\text{proto}} = \sum_j w_j(h) v_j.
-$$
+```
 
 Crystallized memory is updated via a Hebbian‑style rule (applied **after** gradient steps so it does not interfere with autograd):
 
-$$
+```math
 p_j \leftarrow (1-\mu) p_j + \mu \,\overline{h}_j,
-$$
+```
 
 where $\overline{h}_j$ is the mean latent over samples currently closest to prototype $j$, and $\mu$ is a small momentum (`0.05` in the code).
 
@@ -84,23 +84,23 @@ where $\overline{h}_j$ is the mean latent over samples currently closest to prot
 
 The total energy for a latent $h$ is:
 
-$$
+```math
 E(h;x,s) = E_{\text{align}}(h;x,s) + E_{\text{proto}}(h) + \lambda_h \|h\|_2^2.
-$$
+```
 
 The Fluid module performs gradient-descent in latent space:
 
-$$
+```math
 h_{t+1} = h_t - \eta_t \big(\nabla_h E(h_t;x,s) + f_{\text{drift}}(h_t)\big),
-$$
+```
 
 where $f_{\text{drift}}$ is an optional MLP ("drift") and $\eta_t$ is a learned step size modulated by the **investment gate** (below). When `T_max = 0`, the model collapses to a strong MLP head with no dynamics.
 
 To favor smooth latent trajectories, we optionally add:
 
-$$
+```math
 \mathcal{L}_{\text{smooth}} = \lambda_{\text{smooth}} \sum_{t>0} \|h_t - h_{t-1}\|_2^2.
-$$
+```
 
 ### 1.5 Investment Gate (Effort Allocation)
 
@@ -110,15 +110,15 @@ The **InvestmentGate** computes an effort scalar $g \in (0,1)$ per example:
 
 We concatenate $h$ and logits/predictions and pass them through a small MLP ending in a sigmoid:
 
-$$
+```math
 g = \sigma(\text{MLP}([h; \text{logits/pred}])),
-$$
+```
 
 then scale step sizes:
 
-$$
+```math
 \eta_t = \text{clamp}(\eta_t^{\text{base}})\cdot \phi_t(g),
-$$
+```
 
 where $\phi_t$ also decays with time step $t$ via an exponential factor (`invest_beta`).
 
@@ -126,15 +126,15 @@ where $\phi_t$ also decays with time step $t$ via an exponential factor (`invest
 
 Classification:
 
-$$
+```math
 z = (1-\alpha_{\text{proto}})\,\text{logits}^{\text{mlp}} + \alpha_{\text{proto}}\,\text{logits}^{\text{proto}}.
-$$
+```
 
 Regression:
 
-$$
+```math
 y = (1-\alpha_{\text{proto\_reg}})\,y^{\text{mlp}} + \alpha_{\text{proto\_reg}}\,y^{\text{proto}}.
-$$
+```
 
 For classification we use cross‑entropy loss with optional label smoothing; for regression, MSE. Both can be regularized with latent smoothing and weight decay.
 
@@ -242,12 +242,12 @@ For classification tasks, after training TriED on teacher‑stacked features, we
 3. Compute TriED probabilities on the augmented test features.
 4. Blend them:
 
-$$
+```math
 p_{\text{ens}} = \lambda_{\text{TriED}} p_{\text{TriED}} +
                  \lambda_{\text{RF}} p_{\text{RF}} +
                  \lambda_{\text{GB}} p_{\text{GB}} +
                  \lambda_{\text{ET}} p_{\text{ET}},
-$$
+```
 
 with weights currently chosen in code to emphasize ExtraTrees for pure accuracy.
 5. Predict $\hat{y} = \arg\max_k p_{\text{ens},k}$.
@@ -371,41 +371,41 @@ The iterative search in `iterative_assessment` explores this space with small, i
 
 - **Energy**
 
-$$
+```math
 E(h;x,s) = \lambda_{\text{align}}\|A h - s\|_2^2
          + \lambda_{\text{proto}} \min_j \|h-p_j\|_2^2
          + \lambda_h\|h\|_2^2.
-$$
+```
 
 - **Dynamics**
 
-$$
+```math
 h_{t+1} = h_t - \eta_t \big(\nabla_h E(h_t;x,s) + f_{\text{drift}}(h_t)\big),
-$$
+```
 
 with $\eta_t$ modulated by the investment gate's effort estimate.
 
 - **Prototype logits**
 
-$$
+```math
 \text{logits}_k^{\text{proto}} = -\log \sum_m \exp\big(-\|h-p_{k,m}\|_2^2\big).
-$$
+```
 
 - **Prototype regression head**
 
-$$
+```math
 y^{\text{proto}} = \sum_j \frac{\exp(-\|h-p_j\|_2^2)}{\sum_\ell \exp(-\|h-p_\ell\|_2^2)} v_j.
-$$
+```
 
 - **Fusion**
 
-$$
+```math
 z = (1-\alpha_{\text{proto}})\,z^{\text{mlp}} + \alpha_{\text{proto}}\,z^{\text{proto}},
-$$
+```
 
-$$
+```math
 y = (1-\alpha_{\text{proto\_reg}})\,y^{\text{mlp}} + \alpha_{\text{proto\_reg}}\,y^{\text{proto}}.
-$$
+```
 
 - **Loss**  
   Classification: cross‑entropy (with optional label smoothing);  
