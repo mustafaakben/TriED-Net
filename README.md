@@ -16,104 +16,104 @@ The rest of this document explains the model in a paper-style format and is grou
 
 ### 1.1 General Module (Encoder + Head)
 
-Given an input vector \(x \in \mathbb{R}^D\), the encoder is a two-layer MLP:
-\[
+Given an input vector $x \in \mathbb{R}^D$, the encoder is a two-layer MLP:
+$$
 h_0 = \text{LN}\big(\sigma(W_2\,\sigma(W_1 x + b_1) + b_2)\big), \quad h_0 \in \mathbb{R}^H
-\]
-where \(\sigma\) is ReLU, LN is LayerNorm, and optional dropout is applied between layers (controlled by `dropout` in `TriEDConfig`).
+$$
+where $\sigma$ is ReLU, LN is LayerNorm, and optional dropout is applied between layers (controlled by `dropout` in `TriEDConfig`).
 
 The task head is linear:
-- classification: \(\text{logits}^{\text{mlp}} = W_{\text{clf}} h + b_{\text{clf}}\),
-- regression: \(y^{\text{mlp}} = W_{\text{reg}} h + b_{\text{reg}}\).
+- classification: $\text{logits}^{\text{mlp}} = W_{\text{clf}} h + b_{\text{clf}}$,
+- regression: $y^{\text{mlp}} = W_{\text{reg}} h + b_{\text{reg}}$.
 
 ### 1.2 Symbolic Codebook & Alignment
 
-An optional **Symbolizer** maps inputs to a “symbolic” embedding:
-\[
+An optional **Symbolizer** maps inputs to a "symbolic" embedding:
+$$
 h_{\text{sym}} = \phi(x) \in \mathbb{R}^{C},\quad \pi = \text{softmax}\left(\frac{W_{\text{code}} h_{\text{sym}}}{\tau}\right) \in \Delta^{K-1},
-\]
-\[
+$$
+$$
 s = \pi^\top \mathcal{C} \in \mathbb{R}^C,
-\]
-where \(\mathcal{C} \in \mathbb{R}^{K \times C}\) is the learned codebook (`codebook_size`), and \(\tau>0\) is a learnable temperature. A linear map \(A\) projects the latent \(h\) into the same space as \(s\).
+$$
+where $\mathcal{C} \in \mathbb{R}^{K \times C}$ is the learned codebook (`codebook_size`), and $\tau>0$ is a learnable temperature. A linear map $A$ projects the latent $h$ into the same space as $s$.
 
 The alignment term in the energy encourages consistency:
-\[
+$$
 E_{\text{align}}(h;x,s) = \lambda_{\text{align}} \|A h - s\|_2^2.
-\]
+$$
 
 ### 1.3 Prototypes & Crystallized Memory
 
-For classification, we maintain prototypes \(\{p_{k,m}\}\) for each class \(k\) and slot \(m\). For regression, we maintain prototypes \(\{p_j\}\) and associated scalar values \(v_j\).
+For classification, we maintain prototypes $\{p_{k,m}\}$ for each class $k$ and slot $m$. For regression, we maintain prototypes $\{p_j\}$ and associated scalar values $v_j$.
 
 Energy contribution from prototypes:
-\[
+$$
 E_{\text{proto}}(h) = \lambda_{\text{proto}} \min_j \|h - p_j\|_2^2.
-\]
+$$
 
-Prototype logits for class \(k\):
-\[
+Prototype logits for class $k$:
+$$
 d^2_{k,m}(h) = \|h - p_{k,m}\|_2^2,\quad
 \text{logits}_k^{\text{proto}} = -\log\sum_m \exp(-d^2_{k,m}(h)).
-\]
+$$
 
 Regression prototype head:
-\[
+$$
 w_j(h) = \frac{\exp(-\|h-p_j\|_2^2)}{\sum_\ell \exp(-\|h-p_\ell\|_2^2)},\quad
 y^{\text{proto}} = \sum_j w_j(h) v_j.
-\]
+$$
 
 Crystallized memory is updated via a Hebbian‑style rule (applied **after** gradient steps so it does not interfere with autograd):
-\[
+$$
 p_j \leftarrow (1-\mu) p_j + \mu \,\overline{h}_j,
-\]
-where \(\overline{h}_j\) is the mean latent over samples currently closest to prototype \(j\), and \(\mu\) is a small momentum (`0.05` in the code).
+$$
+where $\overline{h}_j$ is the mean latent over samples currently closest to prototype $j$, and $\mu$ is a small momentum (`0.05` in the code).
 
 ### 1.4 Energy, Dynamics, and Latent Smoothing
 
-The total energy for a latent \(h\) is:
-\[
+The total energy for a latent $h$ is:
+$$
 E(h;x,s) = E_{\text{align}}(h;x,s) + E_{\text{proto}}(h) + \lambda_h \|h\|_2^2.
-\]
+$$
 
 The Fluid module performs gradient-descent in latent space:
-\[
+$$
 h_{t+1} = h_t - \eta_t \big(\nabla_h E(h_t;x,s) + f_{\text{drift}}(h_t)\big),
-\]
-where \(f_{\text{drift}}\) is an optional MLP (“drift”) and \(\eta_t\) is a learned step size modulated by the **investment gate** (below). When `T_max = 0`, the model collapses to a strong MLP head with no dynamics.
+$$
+where $f_{\text{drift}}$ is an optional MLP ("drift") and $\eta_t$ is a learned step size modulated by the **investment gate** (below). When `T_max = 0`, the model collapses to a strong MLP head with no dynamics.
 
 To favor smooth latent trajectories, we optionally add:
-\[
+$$
 \mathcal{L}_{\text{smooth}} = \lambda_{\text{smooth}} \sum_{t>0} \|h_t - h_{t-1}\|_2^2.
-\]
+$$
 
 ### 1.5 Investment Gate (Effort Allocation)
 
-The **InvestmentGate** computes an effort scalar \(g \in (0,1)\) per example:
+The **InvestmentGate** computes an effort scalar $g \in (0,1)$ per example:
 - For classification, difficulty is proportional to normalized entropy of the current prediction.
 - For regression, difficulty is proportional to normalized magnitude of the prediction.
 
-We concatenate \(h\) and logits/predictions and pass them through a small MLP ending in a sigmoid:
-\[
+We concatenate $h$ and logits/predictions and pass them through a small MLP ending in a sigmoid:
+$$
 g = \sigma(\text{MLP}([h; \text{logits/pred}])),
-\]
+$$
 then scale step sizes:
-\[
+$$
 \eta_t = \text{clamp}(\eta_t^{\text{base}})\cdot \phi_t(g),
-\]
-where \(\phi_t\) also decays with time step \(t\) via an exponential factor (`invest_beta`).
+$$
+where $\phi_t$ also decays with time step $t$ via an exponential factor (`invest_beta`).
 
 ### 1.6 Fusion and Final Prediction
 
 Classification:
-\[
+$$
 z = (1-\alpha_{\text{proto}})\,\text{logits}^{\text{mlp}} + \alpha_{\text{proto}}\,\text{logits}^{\text{proto}}.
-\]
+$$
 
 Regression:
-\[
+$$
 y = (1-\alpha_{\text{proto\_reg}})\,y^{\text{mlp}} + \alpha_{\text{proto\_reg}}\,y^{\text{proto}}.
-\]
+$$
 
 For classification we use cross‑entropy loss with optional label smoothing; for regression, MSE. Both can be regularized with latent smoothing and weight decay.
 
@@ -163,7 +163,7 @@ For every dataset we train:
 Metrics:
 - Classification: Accuracy and macro‑F1.
 - Multilabel: subset Accuracy and micro‑F1.
-- Regression: MSE and \(R^2\).
+- Regression: MSE and $R^2$.
 
 Results are printed as ranked tables per dataset.
 
@@ -179,18 +179,18 @@ Before searching TriED configs, we **augment** the input features with teacher p
 - Regression:
   - Train a GradientBoosting regressor; append its scalar prediction.
 
-This creates augmented inputs \(x' = [x; \text{teacher}(x)]\) that encode strong tree‑based priors, which TriED can then refine.
+This creates augmented inputs $x' = [x; \text{teacher}(x)]$ that encode strong tree‑based priors, which TriED can then refine.
 
 ### 3.3 Iterative Internal Assessment (Architecture Search)
 
 The function `iterative_assessment` implements a **10+ step micro‑search** over `TriEDConfig`:
 
 - Start from a base config (task‑aware).
-- For each iteration \(i\), apply a small change (e.g., enable prototypes, turn on drift, increase `hidden_dim`, change `T_max`, adjust energy weights).
+- For each iteration $i$, apply a small change (e.g., enable prototypes, turn on drift, increase `hidden_dim`, change `T_max`, adjust energy weights).
 - Train the resulting TriED variant for a small number of `preview_epochs` on the (train, val) split.
 - Score the variant:
   - Classification: validation Accuracy,
-  - Regression: \(R^2\) (via `score_from_metrics`).
+  - Regression: $R^2$ (via `score_from_metrics`).
 - Keep the config if it improves the score, otherwise revert.
 
 At the end, the best config is upgraded to use a larger `epochs` budget (`full_epochs` or more) for final training on that dataset.
@@ -220,14 +220,14 @@ For classification tasks, after training TriED on teacher‑stacked features, we
 2. Compute class probabilities on the test set for all three trees.
 3. Compute TriED probabilities on the augmented test features.
 4. Blend them:
-\[
+$$
 p_{\text{ens}} = \lambda_{\text{TriED}} p_{\text{TriED}} +
                  \lambda_{\text{RF}} p_{\text{RF}} +
                  \lambda_{\text{GB}} p_{\text{GB}} +
                  \lambda_{\text{ET}} p_{\text{ET}},
-\]
+$$
 with weights currently chosen in code to emphasize ExtraTrees for pure accuracy.
-5. Predict \(\hat{y} = \arg\max_k p_{\text{ens},k}\).
+5. Predict $\hat{y} = \arg\max_k p_{\text{ens},k}$.
 
 The ensemble is reported as **TriED+Trees‑Ensemble** in tables; pure TriED is also shown separately.
 
